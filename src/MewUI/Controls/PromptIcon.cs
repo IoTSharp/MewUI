@@ -36,7 +36,7 @@ public sealed class PromptIcon : FrameworkElement
     private static readonly PathGeometry CrashHorn = PathGeometry.Parse("M81.496 63.438 55.199 46.75c-9.095-5.504-19.696 3.474-15.816 13.959l12.16 34.411 M174.504 63.438l26.297-16.687c9.094-5.505 19.696 3.473 15.816 13.958l-12.16 34.411").Apply(x => x.Freeze());
 
     // Static shared resources (factory-lifetime, never disposed).
-    private static bool _staticInit;
+    private static bool _isInitialized;
 
     private static IPen? _penQuestionStroke;
     private static IPen? _penInfoStroke;
@@ -75,11 +75,14 @@ public sealed class PromptIcon : FrameworkElement
         base.OnRender(context);
 
         var bounds = Bounds.Deflate(new Thickness(0.5));
-        if (bounds.Width <= 0 || bounds.Height <= 0) return;
+        if (bounds.Width <= 0 || bounds.Height <= 0)
+        {
+            return;
+        }
 
-        var f = GetGraphicsFactory();
-        EnsureStaticResources(f);
-        EnsureFillGradient(f, bounds);
+        var factory = GetGraphicsFactory();
+        EnsureStaticResources(factory);
+        EnsureFillGradient(factory, bounds);
 
         switch (Kind)
         {
@@ -116,8 +119,12 @@ public sealed class PromptIcon : FrameworkElement
 
     private static void EnsureStaticResources(IGraphicsFactory f)
     {
-        if (_staticInit) return;
-        _staticInit = true;
+        if (_isInitialized)
+        {
+            return;
+        }
+
+        _isInitialized = true;
 
         _penQuestionStroke = f.CreatePen(Color.FromRgb(138, 144, 155), StrokeThickness, RoundedStroke);
         _penInfoStroke = f.CreatePen(Color.FromRgb(21, 101, 191), StrokeThickness, RoundedStroke);
@@ -152,7 +159,10 @@ public sealed class PromptIcon : FrameworkElement
     private void EnsureFillGradient(IGraphicsFactory f, Rect bounds)
     {
         var kind = Kind;
-        if (kind == _cachedKind && _cachedBounds == bounds && _fill != null) return;
+        if (kind == _cachedKind && _cachedBounds == bounds && _fill != null)
+        {
+            return;
+        }
 
         (_fill as IDisposable)?.Dispose();
         _fill = null;
@@ -180,27 +190,42 @@ public sealed class PromptIcon : FrameworkElement
     private static void DrawShield(IGraphicsContext context, Rect bounds)
     {
         BeginSourceRect(context, ShieldOutline.GetBounds(), bounds, 1.0, Stretch.Uniform);
-        context.FillPath(ShieldLeft, _brushShieldLeft!);
-        context.FillPath(ShieldRight, _brushShieldRight!);
-        context.DrawPath(ShieldOutline, _penShieldOutline!);
-        context.Restore();
+        try
+        {
+            context.FillPath(ShieldLeft, _brushShieldLeft!);
+            context.FillPath(ShieldRight, _brushShieldRight!);
+            context.DrawPath(ShieldOutline, _penShieldOutline!);
+        }
+        finally
+        {
+            context.Restore();
+        }
     }
 
     private static void DrawCrash(IGraphicsContext context, Rect bounds)
     {
         BeginSourceRect(context, new Rect(38, 38, 180, 186), bounds, 1.0, Stretch.Uniform);
-        context.FillPath(CrashHorn, _brushCrashHorn!);
-        context.DrawPath(CrashHorn, _penCrashHorn!);
-        context.FillPath(CrashBody, _brushCrashBody!);
-        context.DrawPath(CrashBody, _penCrashBody!);
-        DrawGeometry(context, QuestionGlyph, new Rect(42, 50, 172, 172), _brushCrashGlyph, null, 0.628, Stretch.Uniform);
-        context.Restore();
+        try
+        {
+            context.FillPath(CrashHorn, _brushCrashHorn!);
+            context.DrawPath(CrashHorn, _penCrashHorn!);
+            context.FillPath(CrashBody, _brushCrashBody!);
+            context.DrawPath(CrashBody, _penCrashBody!);
+            DrawGeometry(context, QuestionGlyph, new Rect(42, 50, 172, 172), _brushCrashGlyph, null, 0.628, Stretch.Uniform);
+        }
+        finally
+        {
+            context.Restore();
+        }
     }
 
     private static void DrawGeometry(IGraphicsContext context, PathGeometry geometry, Rect bounds, IBrush? brush, IPen? pen, double scale, Stretch stretch)
     {
         var geoBounds = geometry.GetBounds();
-        if (geoBounds.Width <= 0 || geoBounds.Height <= 0) return;
+        if (geoBounds.Width <= 0 || geoBounds.Height <= 0)
+        {
+            return;
+        }
 
         var targetRect = new Rect(
             bounds.X + (bounds.Width * (1.0 - scale)) * 0.5,
@@ -208,15 +233,28 @@ public sealed class PromptIcon : FrameworkElement
             bounds.Width * scale,
             bounds.Height * scale);
 
-        ComputeStretchTransform(geoBounds, targetRect, stretch, out double sx, out double sy, out double tx, out double ty);
+        ComputeStretchTransform(geoBounds, targetRect, stretch, out var sx, out var sy, out var tx, out var ty);
 
         context.Save();
-        context.Translate(tx, ty);
-        context.Scale(sx, sy);
-        context.Translate(-geoBounds.X, -geoBounds.Y);
-        if (brush != null) context.FillPath(geometry, brush);
-        if (pen != null) context.DrawPath(geometry, pen);
-        context.Restore();
+        try
+        {
+            context.Translate(tx, ty);
+            context.Scale(sx, sy);
+            context.Translate(-geoBounds.X, -geoBounds.Y);
+            if (brush != null)
+            {
+                context.FillPath(geometry, brush);
+            }
+
+            if (pen != null)
+            {
+                context.DrawPath(geometry, pen);
+            }
+        }
+        finally
+        {
+            context.Restore();
+        }
     }
 
     private static void BeginSourceRect(IGraphicsContext context, Rect sourceBounds, Rect bounds, double scale, Stretch stretch)
@@ -227,7 +265,7 @@ public sealed class PromptIcon : FrameworkElement
             bounds.Width * scale,
             bounds.Height * scale);
 
-        ComputeStretchTransform(sourceBounds, targetRect, stretch, out double sx, out double sy, out double tx, out double ty);
+        ComputeStretchTransform(sourceBounds, targetRect, stretch, out var sx, out var sy, out var tx, out var ty);
 
         context.Save();
         context.Translate(tx, ty);
@@ -235,8 +273,11 @@ public sealed class PromptIcon : FrameworkElement
         context.Translate(-sourceBounds.X, -sourceBounds.Y);
     }
 
-    private static ILinearGradientBrush VertGrad(IGraphicsFactory f, Rect bounds, Color start, Color end)
-        => f.CreateLinearGradientBrush(new Point(bounds.Left, bounds.Top), new Point(bounds.Left, bounds.Bottom), [new(0, start), new(1, end)]);
+    private static ILinearGradientBrush VertGrad(IGraphicsFactory factory, Rect bounds, Color start, Color end)
+        => factory.CreateLinearGradientBrush(
+            new Point(bounds.Left, bounds.Top),
+            new Point(bounds.Left, bounds.Bottom),
+            [new(0, start), new(1, end)]);
 
     private static void ComputeStretchTransform(Rect geoBounds, Rect destBounds, Stretch stretch, out double scaleX, out double scaleY, out double offsetX, out double offsetY)
     {
@@ -253,18 +294,12 @@ public sealed class PromptIcon : FrameworkElement
                 break;
 
             case Stretch.UniformToFill:
-            {
-                double s = Math.Max(dw / gw, dh / gh);
-                scaleX = scaleY = s;
+                scaleX = scaleY = Math.Max(dw / gw, dh / gh);
                 break;
-            }
-            case Stretch.Uniform:
+
             default:
-            {
-                double s = Math.Min(dw / gw, dh / gh);
-                scaleX = scaleY = s;
+                scaleX = scaleY = Math.Min(dw / gw, dh / gh);
                 break;
-            }
         }
 
         double scaledW = gw * scaleX;
