@@ -761,12 +761,18 @@ internal sealed partial class MewVGWin32GraphicsContext : GraphicsContextBase
             paint = _vg.ImagePattern(patternX, patternY, patternW, patternH, 0f, imageId, alpha);
         }
 
-        _vg.ShapeAntiAlias(false);
+        // Outline AA only matters when the rect is rasterised non-axis-aligned
+        // (rotation/skew). Axis-aligned image fills land on integer pixel boundaries —
+        // the texture's own sampling handles edges and shape AA would add a needless
+        // half-pixel feather. D2D applies the same coverage AA implicitly on its
+        // bitmap draw; this matches that behaviour.
+        bool isAxisAligned = _transform.M12 == 0f && _transform.M21 == 0f;
+        if (isAxisAligned) _vg.ShapeAntiAlias(false);
         _vg.BeginPath();
         _vg.Rect((float)destRect.X, (float)destRect.Y, (float)destRect.Width, (float)destRect.Height);
         _vg.FillPaint(paint);
         _vg.Fill();
-        _vg.ShapeAntiAlias(true);
+        if (isAxisAligned) _vg.ShapeAntiAlias(true);
     }
 
     private NVGimageFlags GetImageFlags()
