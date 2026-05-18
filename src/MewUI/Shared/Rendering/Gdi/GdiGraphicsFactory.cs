@@ -185,9 +185,25 @@ public sealed class GdiGraphicsFactory : IGraphicsFactory, IRenderDevice, IWindo
     public IImage CreateImageView(IPixelBufferSource source)
         => new GdiImage(source);
 
-    public IImage CreateImageView(IExternalSampleSource source)
+    public IImage CreateImageView(IExternalRasterSource source)
         => throw new NotSupportedException(
-            $"{GetType().Name} does not support external sample sources of type {source.GetType().Name}.");
+            $"{GetType().Name} does not support external raster sources of type {source.GetType().Name}.");
+
+    /// <summary>Wraps an externally-owned DIB section as an <see cref="IImage"/>. Caller keeps DIB ownership; call <see cref="MarkExternalImageBitsChanged"/> after writes.</summary>
+    public IImage CreateImageOverDibSection(int width, int height, nint dibHandle, nint dibBits)
+        => new GdiImage(width, height, dibHandle, dibBits);
+
+    /// <summary>Invalidates derived caches on an image returned by <see cref="CreateImageOverDibSection"/>.</summary>
+    public void MarkExternalImageBitsChanged(IImage image)
+    {
+        if (image is GdiImage gdi) gdi.MarkBitsChanged();
+    }
+
+    /// <summary>Flags an image as fully opaque so the GDI context picks SRCCOPY over AlphaBlend.</summary>
+    public void SetImageOpaque(IImage image, bool opaque)
+    {
+        if (image is GdiImage gdi) gdi.IsOpaque = opaque;
+    }
 
     public bool TryReadPixels(IRenderSurface source, Span<byte> destination, int destinationStrideBytes)
         => RenderDeviceFactoryHelpers.TryReadPixels(source, destination, destinationStrideBytes);
@@ -244,9 +260,7 @@ public sealed class GdiGraphicsFactory : IGraphicsFactory, IRenderDevice, IWindo
 
     public bool Present(Window window, IWindowSurface surface, double opacity)
     {
-        if (surface is not IWin32LayeredWindowSurface win32Surface ||
-            surface.Kind != WindowSurfaceKind.Layered ||
-            win32Surface.Hwnd == 0)
+        if (surface is not IWin32WindowSurface win32Surface || win32Surface.Hwnd == 0)
         {
             return false;
         }
