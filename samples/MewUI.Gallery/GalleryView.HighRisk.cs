@@ -109,6 +109,7 @@ partial class GalleryView
                                         new AiContentBlock { Kind = AiContentBlockKind.Code, Language = "json", Text = "{ \"status\": \"ok\", \"attachments\": " + attachments.Count + " }" },
                                         new AiContentBlock { Kind = AiContentBlockKind.Canvas }
                                     ]);
+                                return Task.FromResult(true);
                             }),
 
                         new StackPanel()
