@@ -6,7 +6,7 @@ using Aprillz.MewUI.Rendering;
 
 namespace Aprillz.MewUI.Controls.HighRisk;
 
-public sealed record AiAttachment(string Name, string? Kind = null, string? Path = null, long? SizeBytes = null);
+public sealed record AiAttachment(string Name, string? Kind = null, string? Path = null, long? SizeBytes = null, string? Id = null);
 
 public enum AiContentBlockKind
 {
@@ -45,13 +45,24 @@ public sealed class AiConversationPanel : UserControl
     private readonly ObservableCollection<AiAttachment> _draftAttachments = new();
     private readonly ObservableValue<string> _input = new(string.Empty);
     private readonly ObservableValue<string> _status = new("Ready");
-    private readonly ObservableValue<string> _subtitle = new("AI conversation");
+    private readonly ObservableValue<string> _subtitle = new("sonnet.vip");
+    private readonly ObservableValue<bool> _composerEnabledValue = new(true);
+    private readonly ObservableValue<bool> _approvalVisible = new(false);
+    private readonly ObservableValue<string> _approvalTitleText = new(string.Empty);
+    private readonly ObservableValue<string> _approvalStateText = new(string.Empty);
+    private readonly ObservableValue<string> _approvalDetailsText = new(string.Empty);
+    private readonly ObservableValue<string> _approvalHintText = new(string.Empty);
+    private string? _approvalTitle;
+    private string? _approvalState;
+    private string? _approvalDetails;
+    private string? _approvalHint;
+    private bool _composerEnabled = true;
+    private bool _echoUserMessage = true;
     private ItemsControl _messagesList = null!;
-    private TextBox _inputBox = null!;
+    private MultiLineTextBox _inputBox = null!;
 
     public AiConversationPanel()
     {
-        AttachInitialMessages();
         Build();
     }
 
@@ -59,7 +70,15 @@ public sealed class AiConversationPanel : UserControl
 
     public ObservableCollection<AiAttachment> DraftAttachments => _draftAttachments;
 
-    public event Action<string, IReadOnlyList<AiAttachment>>? SendRequested;
+    public event Func<string, IReadOnlyList<AiAttachment>, Task<bool>>? SendRequested;
+
+    public event Action? AttachRequested;
+
+    public event Action<AiAttachment>? DraftAttachmentRemoveRequested;
+
+    public event Action? ApprovalApproveRequested;
+
+    public event Action? ApprovalApproveAllRequested;
 
     public void AppendAssistant(string content)
     {
@@ -73,12 +92,91 @@ public sealed class AiConversationPanel : UserControl
         ScrollToBottom();
     }
 
+    public void ClearMessages()
+    {
+        _messages.Clear();
+        RefreshMessages();
+    }
+
+    public void SetMessages(IEnumerable<AiConversationMessage> messages)
+    {
+        ArgumentNullException.ThrowIfNull(messages);
+
+        _messages.Clear();
+        foreach (var message in messages)
+        {
+            _messages.Add(message);
+        }
+
+        RefreshMessages();
+    }
+
+    public void SetDraftAttachments(IEnumerable<AiAttachment> attachments)
+    {
+        ArgumentNullException.ThrowIfNull(attachments);
+
+        _draftAttachments.Clear();
+        foreach (var attachment in attachments)
+        {
+            _draftAttachments.Add(attachment);
+        }
+
+        _status.Value = _draftAttachments.Count == 0 ? "就绪" : $"{_draftAttachments.Count} 个附件";
+        Build();
+    }
+
+    public void ClearDraftAttachments()
+    {
+        _draftAttachments.Clear();
+        _status.Value = "就绪";
+        Build();
+    }
+
+    public void SetStatus(string status)
+    {
+        _status.Value = status;
+    }
+
+    public void SetSubtitle(string subtitle)
+    {
+        _subtitle.Value = subtitle;
+    }
+
+    public void SetComposerEnabled(bool enabled)
+    {
+        _composerEnabled = enabled;
+        _composerEnabledValue.Value = enabled;
+        if (_inputBox != null)
+        {
+            _inputBox.IsEnabled = enabled;
+        }
+    }
+
+    public void SetEchoUserMessage(bool echoUserMessage)
+    {
+        _echoUserMessage = echoUserMessage;
+    }
+
+    public void SetApprovalPrompt(string? title, string? state, string? details, string? hint)
+    {
+        _approvalTitle = string.IsNullOrWhiteSpace(title) ? null : title;
+        _approvalState = state;
+        _approvalDetails = details;
+        _approvalHint = hint;
+        SyncApprovalPrompt();
+    }
+
+    public void ClearApprovalPrompt()
+    {
+        SetApprovalPrompt(null, null, null, null);
+    }
+
     public void AddDraftAttachment(AiAttachment attachment)
     {
         ArgumentNullException.ThrowIfNull(attachment);
 
         _draftAttachments.Add(attachment);
-        _status.Value = $"{_draftAttachments.Count} attachment(s)";
+        _status.Value = $"{_draftAttachments.Count} 个附件";
         Build();
     }
 
@@ -117,6 +215,7 @@ public sealed class AiConversationPanel : UserControl
 
     protected override Element? OnBuild()
     {
+        SyncApprovalPrompt();
         var listView = ItemsView.Create(_messages, textSelector: m => m.Content, keySelector: m => m);
         _messagesList = new ItemsControl()
             .Ref(out var list)
@@ -137,12 +236,12 @@ public sealed class AiConversationPanel : UserControl
                     .DockTop()
                     .Padding(10, 8)
                     .BorderThickness(1)
-                    .CornerRadius(8)
+                    .CornerRadius(0)
                     .Child(
                         new DockPanel()
                             .Children(
                                 new TextBlock()
-                                    .Text("AI 富交互")
+                                    .Text("曾华AI")
                                     .FontSize(16)
                                     .SemiBold()
                                     .DockLeft(),
@@ -152,11 +251,12 @@ public sealed class AiConversationPanel : UserControl
                                     .DockRight()
                             )),
 
+                BuildApprovalPrompt().DockTop(),
                 BuildComposer().DockBottom(),
 
                 new Border()
                     .BorderThickness(1)
-                    .CornerRadius(8)
+                    .CornerRadius(0)
                     .Child(
                         new ScrollViewer()
                             .VerticalScroll(ScrollMode.Auto)
@@ -184,12 +284,15 @@ public sealed class AiConversationPanel : UserControl
                             .Children(
                                 BuildAttachmentChips(),
 
-                                new TextBox()
+                                new MultiLineTextBox()
                                     .Ref(out _inputBox)
-                                    .Placeholder("Write a reply or paste content")
+                                    .Height(76)
+                                    .Wrap()
+                                    .BindIsEnabled(_composerEnabledValue)
+                                    .Placeholder("输入消息，Enter 发送，Shift+Enter 换行")
                                     .BindText(_input)
                                     .OnKeyDown(OnComposerKeyDown)
-                                    .ToolTip("Enter to send, Shift+Enter for newline")
+                                    .ToolTip("Enter 发送，Shift+Enter 换行")
                             ),
 
                         new StackPanel()
@@ -198,11 +301,13 @@ public sealed class AiConversationPanel : UserControl
                             .Spacing(8)
                             .Children(
                                 new Button()
-                                    .Content("Attach")
-                                    .OnClick(() => AddDraftAttachment(new AiAttachment("attachment.txt", "file", "attachment.txt", 2048))),
+                                    .Content("附件")
+                                    .BindIsEnabled(_composerEnabledValue)
+                                    .OnClick(() => AttachRequested?.Invoke()),
 
                                 new Button()
-                                    .Content("Send")
+                                    .Content("发送")
+                                    .BindIsEnabled(_composerEnabledValue)
                                     .OnClick(SendDraft),
 
                                 new TextBlock()
@@ -210,6 +315,63 @@ public sealed class AiConversationPanel : UserControl
                                     .CenterVertical()
                             )
                     ));
+    }
+
+    private FrameworkElement BuildApprovalPrompt()
+    {
+        var approvalButtons = new StackPanel()
+            .Horizontal()
+            .Spacing(8)
+            .DockRight()
+            .Children(
+                new Button()
+                    .Content("本会话全部确定")
+                    .OnClick(() => ApprovalApproveAllRequested?.Invoke()),
+
+                new Button()
+                    .Content("确定")
+                    .OnClick(() => ApprovalApproveRequested?.Invoke()));
+
+        var approvalActions = new DockPanel()
+            .Children(
+                new TextBlock()
+                    .BindText(_approvalHintText)
+                    .DockLeft()
+                    .WithTheme((t, text) => text.Foreground(t.Palette.PlaceholderText)),
+
+                approvalButtons);
+
+        return new Border()
+            .Padding(10, 8)
+            .BorderThickness(1)
+            .CornerRadius(0)
+            .BindIsVisible(_approvalVisible)
+            .WithTheme((t, border) =>
+            {
+                border.Background(t.Palette.ControlBackground);
+                border.BorderBrush(t.Palette.Accent.Lerp(t.Palette.ControlBorder, 0.50));
+            })
+            .Child(
+                new StackPanel()
+                    .Vertical()
+                    .Spacing(6)
+                    .Children(
+                        new DockPanel()
+                            .Children(
+                                new TextBlock()
+                                    .BindText(_approvalTitleText)
+                                    .SemiBold()
+                                    .DockLeft(),
+
+                                new TextBlock()
+                                    .BindText(_approvalStateText)
+                                    .DockRight()),
+
+                        new TextBlock()
+                            .BindText(_approvalDetailsText)
+                            .TextWrapping(TextWrapping.Wrap),
+
+                        approvalActions));
     }
 
     private FrameworkElement BuildAttachmentChips()
@@ -227,7 +389,7 @@ public sealed class AiConversationPanel : UserControl
         if (_draftAttachments.Count == 0)
         {
             yield return new TextBlock()
-                .Text("No attachments")
+                .Text("无附件")
                 .Foreground(Color.FromRgb(122, 132, 143));
             yield break;
         }
@@ -248,14 +410,14 @@ public sealed class AiConversationPanel : UserControl
                                 .DockLeft(),
 
                             new Button()
-                                .Content("Remove")
+                                .Content("移除")
                                 .DockRight()
                                 .OnClick(() => RemoveDraftAttachment(attachment))
                         ));
 
             chip.ContextMenu = new ContextMenu()
-                .Item("Open", () => OpenAttachment(attachment))
-                .Item("Remove", () => RemoveDraftAttachment(attachment));
+                .Item("打开", () => OpenAttachment(attachment))
+                .Item("移除", () => RemoveDraftAttachment(attachment));
 
             yield return chip;
         }
@@ -394,20 +556,31 @@ public sealed class AiConversationPanel : UserControl
                     .FontSize(10));
     }
 
-    private void SendDraft()
+    private async void SendDraft()
     {
         string text = _input.Value.Trim();
         if (string.IsNullOrEmpty(text) && _draftAttachments.Count == 0)
         {
-            _status.Value = "Nothing to send";
+            _status.Value = "没有可发送内容";
             return;
         }
 
-        AddMessage("user", "You", text, _draftAttachments.ToArray());
-        SendRequested?.Invoke(text, _draftAttachments.ToArray());
+        AiAttachment[] attachments = _draftAttachments.ToArray();
+        bool accepted = await NotifySendRequestedAsync(text, attachments);
+        if (!accepted)
+        {
+            return;
+        }
+
+        if (_echoUserMessage)
+        {
+            AddMessage("user", "我", text, attachments);
+        }
+
         _input.Value = string.Empty;
         _draftAttachments.Clear();
-        _status.Value = $"Sent at {DateTime.Now:HH:mm:ss}";
+        _status.Value = $"已发送 {DateTime.Now:HH:mm:ss}";
+        Build();
         ScrollToBottom();
     }
 
@@ -420,16 +593,54 @@ public sealed class AiConversationPanel : UserControl
         }
     }
 
+    private async Task<bool> NotifySendRequestedAsync(string text, IReadOnlyList<AiAttachment> attachments)
+    {
+        Func<string, IReadOnlyList<AiAttachment>, Task<bool>>? handler = SendRequested;
+        if (handler == null)
+        {
+            return true;
+        }
+
+        foreach (Func<string, IReadOnlyList<AiAttachment>, Task<bool>> subscriber in handler.GetInvocationList())
+        {
+            if (!await subscriber(text, attachments))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    protected override void OnVisualRootChanged(Element? oldRoot, Element? newRoot)
+    {
+        base.OnVisualRootChanged(oldRoot, newRoot);
+        if (newRoot != null && Content is null)
+        {
+            Build();
+        }
+    }
+
     private void RemoveDraftAttachment(AiAttachment attachment)
     {
-        _draftAttachments.Remove(attachment);
-        _status.Value = _draftAttachments.Count == 0 ? "Ready" : $"{_draftAttachments.Count} attachment(s)";
+        if (!_draftAttachments.Remove(attachment))
+        {
+            return;
+        }
+
+        if (DraftAttachmentRemoveRequested != null)
+        {
+            DraftAttachmentRemoveRequested.Invoke(attachment);
+            return;
+        }
+
+        _status.Value = _draftAttachments.Count == 0 ? "就绪" : $"{_draftAttachments.Count} 个附件";
         Build();
     }
 
     private void OpenAttachment(AiAttachment attachment)
     {
-        _status.Value = $"Open {attachment.Name}";
+        _status.Value = $"打开 {attachment.Name}";
     }
 
     private void ScrollToBottom()
@@ -442,21 +653,20 @@ public sealed class AiConversationPanel : UserControl
         _messagesList.ScrollIntoView(Math.Max(0, _messages.Count - 1));
     }
 
-    private void AttachInitialMessages()
+    private void RefreshMessages()
     {
-        AddMessage(
-            "assistant",
-            "Assistant",
-            "Rich content is available.\n\n> Attach files, render code, and reserve canvas space.\n\n```csharp\npanel.AddMessage(\"assistant\", \"AI\", \"done\");\n```",
-            blocks:
-            [
-                new AiContentBlock { Kind = AiContentBlockKind.Paragraph, Text = "Rich content is available." },
-                new AiContentBlock { Kind = AiContentBlockKind.Quote, Text = "Attach files, render code, and reserve canvas space." },
-                new AiContentBlock { Kind = AiContentBlockKind.Code, Language = "csharp", Text = "panel.AddMessage(\"assistant\", \"AI\", \"done\");" },
-                new AiContentBlock { Kind = AiContentBlockKind.Canvas, Canvas = new RichCanvasPreview().Height(92) }
-            ]);
+        _messagesList?.ItemsSource?.Invalidate();
+        ScrollToBottom();
+    }
 
-        AddMessage("user", "You", "Great, let's wire it into the gallery.");
+    private void SyncApprovalPrompt()
+    {
+        bool hasApproval = !string.IsNullOrWhiteSpace(_approvalTitle);
+        _approvalVisible.Value = hasApproval;
+        _approvalTitleText.Value = _approvalTitle ?? string.Empty;
+        _approvalStateText.Value = _approvalState ?? string.Empty;
+        _approvalDetailsText.Value = _approvalDetails ?? string.Empty;
+        _approvalHintText.Value = _approvalHint ?? string.Empty;
     }
 
     private static IEnumerable<AiContentBlock> ParseBlocks(string content)
