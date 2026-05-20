@@ -1,5 +1,9 @@
 using Aprillz.MewUI.Rendering;
 
+using System.Text;
+
+using Aprillz.MewUI.Input;
+
 namespace Aprillz.MewUI.Controls.HighRisk;
 
 public enum VncScaleMode
@@ -49,11 +53,13 @@ public enum VncConnectionState
 /// <summary>
 /// Pixel-based VNC framebuffer surface with scale, pointer, and key mapping.
 /// </summary>
-public sealed class VncRemoteDesktopControl : Control
+public sealed class VncRemoteDesktopControl : Control, ITextInputClient
 {
     private readonly Dictionary<IGraphicsFactory, IImage> _imageCache = new(ReferenceEqualityComparer<IGraphicsFactory>.Instance);
     private WriteableBitmap? _framebuffer;
     private byte _buttonMask;
+    private ModifierKeys _sentModifiers = ModifierKeys.None;
+    private int _suppressedTextInputCount;
     private Rect _lastDestinationRect = Rect.Empty;
     private VncConnectionState _connectionState = VncConnectionState.Disconnected;
     private string _statusText = "VNC framebuffer";
@@ -301,8 +307,15 @@ public sealed class VncRemoteDesktopControl : Control
     protected override void OnKeyDown(KeyEventArgs e)
     {
         base.OnKeyDown(e);
+        SendModifierChanges(e.Modifiers);
+
         if (TryMapKeySym(e.Key, out uint keySym))
         {
+            if (IsTextProducingKey(e.Key))
+            {
+                _suppressedTextInputCount++;
+            }
+
             KeyStateChanged?.Invoke(this, new VncKeyEventArgs(true, keySym));
             e.Handled = true;
         }
@@ -316,6 +329,39 @@ public sealed class VncRemoteDesktopControl : Control
             KeyStateChanged?.Invoke(this, new VncKeyEventArgs(false, keySym));
             e.Handled = true;
         }
+
+        SendModifierChanges(e.Modifiers);
+    }
+
+    protected override void OnLostFocus()
+    {
+        base.OnLostFocus();
+        ReleaseSentModifiers();
+        _buttonMask = 0;
+    }
+
+    void ITextInputClient.HandleTextInput(TextInputEventArgs e)
+    {
+        if (string.IsNullOrEmpty(e.Text))
+        {
+            return;
+        }
+
+        if (_suppressedTextInputCount > 0)
+        {
+            _suppressedTextInputCount--;
+            e.Handled = true;
+            return;
+        }
+
+        foreach (Rune rune in e.Text.EnumerateRunes())
+        {
+            uint keySym = RuneToKeySym(rune);
+            KeyStateChanged?.Invoke(this, new VncKeyEventArgs(true, keySym));
+            KeyStateChanged?.Invoke(this, new VncKeyEventArgs(false, keySym));
+        }
+
+        e.Handled = true;
     }
 
     protected override void OnDispose()
@@ -518,4 +564,48 @@ public sealed class VncRemoteDesktopControl : Control
                 return false;
         }
     }
+
+    private void SendModifierChanges(ModifierKeys modifiers)
+    {
+        ModifierKeys normalized = modifiers & (ModifierKeys.Control | ModifierKeys.Shift | ModifierKeys.Alt | ModifierKeys.Meta);
+        SendModifierChange(ModifierKeys.Control, 0xFFE3u, normalized);
+        SendModifierChange(ModifierKeys.Shift, 0xFFE1u, normalized);
+        SendModifierChange(ModifierKeys.Alt, 0xFFE9u, normalized);
+        SendModifierChange(ModifierKeys.Meta, 0xFFEBu, normalized);
+        _sentModifiers = normalized;
+    }
+
+    private void SendModifierChange(ModifierKeys modifier, uint keySym, ModifierKeys activeModifiers)
+    {
+        bool wasDown = (_sentModifiers & modifier) != 0;
+        bool isDown = (activeModifiers & modifier) != 0;
+        if (wasDown == isDown)
+        {
+            return;
+        }
+
+        KeyStateChanged?.Invoke(this, new VncKeyEventArgs(isDown, keySym));
+    }
+
+    private void ReleaseSentModifiers()
+    {
+        SendModifierChanges(ModifierKeys.None);
+    }
+
+    private static uint RuneToKeySym(Rune rune)
+    {
+        int value = rune.Value;
+        if (value <= 0xFF)
+        {
+            return (uint)value;
+        }
+
+        return 0x01000000u | (uint)value;
+    }
+
+    private static bool IsTextProducingKey(Key key)
+        => key is >= Key.A and <= Key.Z
+            || key is >= Key.D0 and <= Key.D9
+            || key is >= Key.NumPad0 and <= Key.NumPad9
+            || key is Key.Space or Key.Add or Key.Subtract or Key.Multiply or Key.Divide or Key.Decimal;
 }
