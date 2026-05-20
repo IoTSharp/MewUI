@@ -43,6 +43,7 @@ public sealed class TerminalControl : Control, ITextInputClient, ITextCompositio
     private readonly StringBuilder _composition = new();
 
     private ITerminalHost? _host;
+    private ITerminalScreenSource? _screenSource;
     private bool _isHostInputAttached;
     private int _columns = DefaultColumns;
     private int _rows = DefaultRows;
@@ -76,13 +77,15 @@ public sealed class TerminalControl : Control, ITextInputClient, ITextCompositio
 
     public override bool Focusable => true;
 
-    public int Columns => _columns;
+    public int Columns => _screenSource?.Columns ?? _columns;
 
-    public int Rows => _rows;
+    public int Rows => _screenSource?.Rows ?? _rows;
 
-    public int ScrollbackLineCount => _scrollback.Count;
+    public int ScrollbackLineCount => _screenSource?.ScrollbackLines ?? _scrollback.Count;
 
     public ITerminalHost? Host => _host;
+
+    public ITerminalScreenSource? ScreenSource => _screenSource;
 
     public int ScrollbackLimit
     {
@@ -117,6 +120,8 @@ public sealed class TerminalControl : Control, ITextInputClient, ITextCompositio
         ArgumentNullException.ThrowIfNull(host);
 
         await DetachHostAsync().ConfigureAwait(false);
+        int initialColumns = Columns;
+        int initialRows = Rows;
         if (clear)
         {
             Clear();
@@ -125,6 +130,12 @@ public sealed class TerminalControl : Control, ITextInputClient, ITextCompositio
         _host = host;
         host.OutputReceived += OnHostOutputReceived;
         host.StateChanged += OnHostStateChanged;
+        if (host is ITerminalScreenSource screenSource)
+        {
+            _screenSource = screenSource;
+            screenSource.ScreenChanged += OnHostScreenChanged;
+        }
+
         if (!_isHostInputAttached)
         {
             InputRequested += OnTerminalInputRequested;
@@ -132,7 +143,7 @@ public sealed class TerminalControl : Control, ITextInputClient, ITextCompositio
             _isHostInputAttached = true;
         }
 
-        await host.StartAsync(new TerminalHostSize(_columns, _rows), cancellationToken).ConfigureAwait(false);
+        await host.StartAsync(new TerminalHostSize(initialColumns, initialRows), cancellationToken).ConfigureAwait(false);
     }
 
     public async ValueTask DetachHostAsync()
@@ -145,12 +156,19 @@ public sealed class TerminalControl : Control, ITextInputClient, ITextCompositio
 
         host.OutputReceived -= OnHostOutputReceived;
         host.StateChanged -= OnHostStateChanged;
+        if (_screenSource != null)
+        {
+            _screenSource.ScreenChanged -= OnHostScreenChanged;
+            _screenSource = null;
+        }
+
         _host = null;
         await host.DisposeAsync().ConfigureAwait(false);
     }
 
     public void Clear()
     {
+        _screenSource?.SetScrollOffset(0);
         _scrollback.Clear();
         _scrollbackOffset = 0;
         ClearScreen();
@@ -162,6 +180,11 @@ public sealed class TerminalControl : Control, ITextInputClient, ITextCompositio
 
     public string GetSelectedText()
     {
+        if (_screenSource != null)
+        {
+            return GetSelectedTextFromScreenSource(_screenSource);
+        }
+
         if (!TryGetSelectionRange(out var start, out var end))
         {
             return string.Empty;
@@ -218,19 +241,21 @@ public sealed class TerminalControl : Control, ITextInputClient, ITextCompositio
             return false;
         }
 
-        SendInput(text.Replace("\r\n", "\n").Replace('\r', '\n'));
+        SendInput(PreparePasteText(text));
         return true;
     }
 
     public void SelectAll()
     {
-        if (_scrollback.Count == 0 && _rows == 0)
+        int totalLines = _screenSource?.TotalLines ?? (_scrollback.Count + _rows);
+        int columns = _screenSource?.Columns ?? _columns;
+        if (totalLines == 0 || columns == 0)
         {
             return;
         }
 
         _selectionAnchor = new TerminalPosition(0, 0);
-        _selectionActive = new TerminalPosition(_scrollback.Count + _rows - 1, _columns - 1);
+        _selectionActive = new TerminalPosition(totalLines - 1, columns - 1);
         InvalidateVisual();
     }
 
@@ -241,9 +266,10 @@ public sealed class TerminalControl : Control, ITextInputClient, ITextCompositio
     Rect ITextCompositionClient.GetCharRectInWindow(int charIndex)
     {
         var bounds = GetTerminalBounds();
+        var (column, row) = GetCursorPosition();
         var local = new Rect(
-            bounds.X + _cursorColumn * _cellWidth,
-            bounds.Y + Math.Clamp(_cursorRow, 0, _rows - 1) * _lineHeight,
+            bounds.X + column * _cellWidth,
+            bounds.Y + Math.Clamp(row, 0, Math.Max(0, Rows - 1)) * _lineHeight,
             Math.Max(1, _cellWidth),
             Math.Max(1, _lineHeight));
         try
@@ -317,7 +343,7 @@ public sealed class TerminalControl : Control, ITextInputClient, ITextCompositio
     protected override Size MeasureContent(Size availableSize)
     {
         EnsureCellMetrics();
-        var content = new Size(_columns * _cellWidth, _rows * _lineHeight).Inflate(Padding);
+        var content = new Size(Columns * _cellWidth, Rows * _lineHeight).Inflate(Padding);
         var border = GetBorderVisualInset();
         if (border > 0)
         {
@@ -334,10 +360,19 @@ public sealed class TerminalControl : Control, ITextInputClient, ITextCompositio
         var terminal = GetTerminalBounds();
         int newColumns = Math.Max(MinColumns, (int)Math.Floor(terminal.Width / Math.Max(1, _cellWidth)));
         int newRows = Math.Max(MinRows, (int)Math.Floor(terminal.Height / Math.Max(1, _lineHeight)));
-        if (newColumns != _columns || newRows != _rows)
+        if (newColumns != Columns || newRows != Rows)
         {
-            Resize(newColumns, newRows, clear: false);
-            TerminalResized?.Invoke(_columns, _rows);
+            if (_screenSource == null)
+            {
+                Resize(newColumns, newRows, clear: false);
+            }
+            else
+            {
+                _columns = newColumns;
+                _rows = newRows;
+            }
+
+            TerminalResized?.Invoke(newColumns, newRows);
         }
     }
 
@@ -421,7 +456,15 @@ public sealed class TerminalControl : Control, ITextInputClient, ITextCompositio
     {
         base.OnMouseWheel(e);
         int delta = e.Delta > 0 ? -3 : 3;
-        _scrollbackOffset = Math.Clamp(_scrollbackOffset + delta, 0, _scrollback.Count);
+        if (_screenSource != null)
+        {
+            _screenSource.SetScrollOffset(_screenSource.ScrollOffset + delta);
+        }
+        else
+        {
+            _scrollbackOffset = Math.Clamp(_scrollbackOffset + delta, 0, _scrollback.Count);
+        }
+
         e.Handled = true;
         InvalidateVisual();
     }
@@ -481,6 +524,12 @@ public sealed class TerminalControl : Control, ITextInputClient, ITextCompositio
         {
             host.OutputReceived -= OnHostOutputReceived;
             host.StateChanged -= OnHostStateChanged;
+            if (_screenSource != null)
+            {
+                _screenSource.ScreenChanged -= OnHostScreenChanged;
+                _screenSource = null;
+            }
+
             _host = null;
             _ = host.DisposeAsync();
         }
@@ -488,6 +537,12 @@ public sealed class TerminalControl : Control, ITextInputClient, ITextCompositio
 
     private void DrawTerminal(IGraphicsContext context, Rect bounds)
     {
+        if (_screenSource != null)
+        {
+            DrawScreenSource(context, bounds, _screenSource);
+            return;
+        }
+
         var font = GetFont(GetGraphicsFactory());
         var visibleStart = Math.Max(0, _scrollback.Count - _scrollbackOffset);
         int historicalRows = Math.Min(_rows, Math.Max(0, _scrollback.Count - visibleStart));
@@ -516,6 +571,107 @@ public sealed class TerminalControl : Control, ITextInputClient, ITextCompositio
         {
             var cursorRect = new Rect(bounds.X + _cursorColumn * _cellWidth, bounds.Y + _cursorRow * _lineHeight, Math.Max(2, _cellWidth), Math.Max(2, _lineHeight));
             context.FillRectangle(new Rect(cursorRect.X, cursorRect.Bottom - 2, cursorRect.Width, 2), CursorColor);
+        }
+    }
+
+    private void DrawScreenSource(IGraphicsContext context, Rect bounds, ITerminalScreenSource source)
+    {
+        var font = GetFont(GetGraphicsFactory());
+        int rows = Math.Min(Rows, source.Rows);
+        int columns = Math.Min(Columns, source.Columns);
+        int firstLine = source.FirstVisibleLine;
+
+        for (int row = 0; row < rows; row++)
+        {
+            int absoluteLine = firstLine + row;
+            double y = bounds.Y + row * _lineHeight;
+            DrawScreenSourceRow(context, font, source, absoluteLine, row, columns, bounds.X, y);
+        }
+
+        DrawComposition(context, font, bounds);
+
+        if (source.CursorVisible && source.ScrollOffset == 0 && IsFocused)
+        {
+            var (cursorColumn, cursorRow) = source.CursorPosition;
+            if (cursorRow >= 0 && cursorRow < rows && cursorColumn >= 0 && cursorColumn < columns)
+            {
+                var cursorRect = new Rect(bounds.X + cursorColumn * _cellWidth, bounds.Y + cursorRow * _lineHeight, Math.Max(2, _cellWidth), Math.Max(2, _lineHeight));
+                context.FillRectangle(new Rect(cursorRect.X, cursorRect.Bottom - 2, cursorRect.Width, 2), CursorColor);
+            }
+        }
+    }
+
+    private void DrawScreenSourceRow(
+        IGraphicsContext context,
+        IFont font,
+        ITerminalScreenSource source,
+        int absoluteLine,
+        int visibleRow,
+        int columns,
+        double x,
+        double y)
+    {
+        for (int col = 0; col < columns; col++)
+        {
+            var cell = source.GetCell(col, absoluteLine);
+            if (IsContinuationCell(cell))
+            {
+                continue;
+            }
+
+            var rect = new Rect(x + col * _cellWidth, y, _cellWidth, _lineHeight);
+            var background = ToColor(cell.Attributes.Background);
+            if (background.A > 0 && background != Background)
+            {
+                double width = IsWideCell(cell) && col + 1 < columns ? _cellWidth * 2 : _cellWidth;
+                context.FillRectangle(new Rect(rect.X, rect.Y, width, rect.Height), background);
+            }
+
+            if (IsCellSelected(visibleRow, col))
+            {
+                context.FillRectangle(rect, SelectionColor);
+            }
+        }
+
+        int start = 0;
+        while (start < columns)
+        {
+            while (start < columns && IsBlankOrContinuationCell(source.GetCell(start, absoluteLine)))
+            {
+                start++;
+            }
+
+            if (start >= columns)
+            {
+                break;
+            }
+
+            var first = source.GetCell(start, absoluteLine);
+            var color = ToColor(first.Attributes.Foreground);
+            int end = start + (IsWideCell(first) ? 2 : 1);
+            while (end < columns)
+            {
+                var next = source.GetCell(end, absoluteLine);
+                if (IsBlankOrContinuationCell(next) || ToColor(next.Attributes.Foreground) != color)
+                {
+                    break;
+                }
+
+                end += IsWideCell(next) ? 2 : 1;
+            }
+
+            var text = new StringBuilder(end - start);
+            for (int i = start; i < end && i < columns; i++)
+            {
+                var cell = source.GetCell(i, absoluteLine);
+                if (!IsContinuationCell(cell))
+                {
+                    text.Append(cell.Text);
+                }
+            }
+
+            context.DrawText(text.ToString(), new Rect(x + start * _cellWidth, y, (end - start) * _cellWidth, _lineHeight), font, color, TextAlignment.Left, TextAlignment.Top, TextWrapping.NoWrap);
+            start = end;
         }
     }
 
@@ -570,13 +726,14 @@ public sealed class TerminalControl : Control, ITextInputClient, ITextCompositio
 
     private void DrawComposition(IGraphicsContext context, IFont font, Rect bounds)
     {
-        if (!_isComposing || _composition.Length == 0 || _scrollbackOffset != 0)
+        if (!_isComposing || _composition.Length == 0 || GetCurrentScrollOffset() != 0)
         {
             return;
         }
 
-        double x = bounds.X + _cursorColumn * _cellWidth;
-        double y = bounds.Y + _cursorRow * _lineHeight;
+        var (column, row) = GetCursorPosition();
+        double x = bounds.X + column * _cellWidth;
+        double y = bounds.Y + row * _lineHeight;
         double width = Math.Max(_cellWidth, _composition.Length * _cellWidth);
         var rect = new Rect(x, y, width, _lineHeight);
         context.FillRectangle(rect, Color.FromArgb(40, 255, 216, 102));
@@ -845,9 +1002,9 @@ public sealed class TerminalControl : Control, ITextInputClient, ITextCompositio
         var bounds = GetTerminalBounds();
         int column = (int)Math.Floor((point.X - bounds.X) / Math.Max(1, _cellWidth));
         int row = (int)Math.Floor((point.Y - bounds.Y) / Math.Max(1, _lineHeight));
-        column = Math.Clamp(column, 0, _columns - 1);
-        row = Math.Clamp(row, 0, _rows - 1);
-        int absoluteLine = Math.Max(0, _scrollback.Count - _scrollbackOffset) + row;
+        column = Math.Clamp(column, 0, Math.Max(0, Columns - 1));
+        row = Math.Clamp(row, 0, Math.Max(0, Rows - 1));
+        int absoluteLine = (_screenSource?.FirstVisibleLine ?? Math.Max(0, _scrollback.Count - _scrollbackOffset)) + row;
         return new TerminalPosition(absoluteLine, column);
     }
 
@@ -872,7 +1029,7 @@ public sealed class TerminalControl : Control, ITextInputClient, ITextCompositio
             return false;
         }
 
-        int absoluteLine = Math.Max(0, _scrollback.Count - _scrollbackOffset) + visibleRow;
+        int absoluteLine = (_screenSource?.FirstVisibleLine ?? Math.Max(0, _scrollback.Count - _scrollbackOffset)) + visibleRow;
         var pos = new TerminalPosition(absoluteLine, column);
         return pos.CompareTo(start) >= 0 && pos.CompareTo(end) <= 0;
     }
@@ -895,12 +1052,22 @@ public sealed class TerminalControl : Control, ITextInputClient, ITextCompositio
 
     private void OnHostOutputReceived(object? sender, TerminalOutputEventArgs e)
     {
+        if (_screenSource != null)
+        {
+            return;
+        }
+
         DispatchToUi(() => Write(e.Text));
     }
 
     private void OnHostStateChanged(object? sender, TerminalHostStateChangedEventArgs e)
     {
         DispatchToUi(() => HostStateChanged?.Invoke(this, e));
+    }
+
+    private void OnHostScreenChanged(object? sender, EventArgs e)
+    {
+        DispatchToUi(InvalidateVisual);
     }
 
     private void OnTerminalInputRequested(object? sender, TerminalInputEventArgs e)
@@ -969,6 +1136,36 @@ public sealed class TerminalControl : Control, ITextInputClient, ITextCompositio
         return menu;
     }
 
+    private string GetSelectedTextFromScreenSource(ITerminalScreenSource source)
+    {
+        if (!TryGetSelectionRange(out var start, out var end))
+        {
+            return string.Empty;
+        }
+
+        _clipboard.Clear();
+        int lastLine = Math.Max(0, source.TotalLines - 1);
+        int columns = source.Columns;
+        for (int line = Math.Clamp(start.Line, 0, lastLine); line <= Math.Clamp(end.Line, 0, lastLine); line++)
+        {
+            int firstColumn = line == start.Line ? start.Column : 0;
+            int lastColumn = line == end.Line ? end.Column : columns - 1;
+            firstColumn = Math.Clamp(firstColumn, 0, Math.Max(0, columns - 1));
+            lastColumn = Math.Clamp(lastColumn, 0, Math.Max(0, columns - 1));
+            if (lastColumn >= firstColumn)
+            {
+                AppendTrimmed(_clipboard, source, line, firstColumn, lastColumn);
+            }
+
+            if (line < end.Line)
+            {
+                _clipboard.AppendLine();
+            }
+        }
+
+        return _clipboard.ToString();
+    }
+
     private static void AppendTrimmed(StringBuilder builder, Cell[] cells, int firstColumn, int lastColumn)
     {
         while (lastColumn >= firstColumn && cells[lastColumn].Rune == ' ')
@@ -981,6 +1178,59 @@ public sealed class TerminalControl : Control, ITextInputClient, ITextCompositio
             builder.Append(cells[i].Rune == '\0' ? ' ' : cells[i].Rune);
         }
     }
+
+    private static void AppendTrimmed(StringBuilder builder, ITerminalScreenSource source, int line, int firstColumn, int lastColumn)
+    {
+        while (lastColumn >= firstColumn && IsBlankOrContinuationCell(source.GetCell(lastColumn, line)))
+        {
+            lastColumn--;
+        }
+
+        for (int i = firstColumn; i <= lastColumn; i++)
+        {
+            var cell = source.GetCell(i, line);
+            if (!IsContinuationCell(cell))
+            {
+                builder.Append(string.IsNullOrEmpty(cell.Text) ? " " : cell.Text);
+            }
+        }
+    }
+
+    private string PreparePasteText(string text)
+    {
+        string normalized = text.Replace("\r\n", "\n", StringComparison.Ordinal).Replace('\r', '\n');
+        if (_host is ITerminalHostCapabilities { IsBracketedPasteModeEnabled: true })
+        {
+            return "\u001b[200~" + normalized + "\u001b[201~";
+        }
+
+        return normalized.Replace('\n', '\r');
+    }
+
+    private (int Column, int Row) GetCursorPosition()
+    {
+        if (_screenSource != null)
+        {
+            return _screenSource.CursorPosition;
+        }
+
+        return (_cursorColumn, _cursorRow);
+    }
+
+    private int GetCurrentScrollOffset()
+        => _screenSource?.ScrollOffset ?? _scrollbackOffset;
+
+    private static bool IsBlankOrContinuationCell(TerminalScreenCell cell)
+        => IsContinuationCell(cell) || string.IsNullOrEmpty(cell.Text) || cell.Text == " ";
+
+    private static bool IsContinuationCell(TerminalScreenCell cell)
+        => cell.Text == "\0";
+
+    private static bool IsWideCell(TerminalScreenCell cell)
+        => !IsContinuationCell(cell) && cell.Text.Length > 0 && char.ConvertToUtf32(cell.Text, 0) > 0x7F;
+
+    private static Color ToColor(uint argb)
+        => Color.FromArgb(argb);
 
     private static int[] ParseCsiArgs(string payload)
     {
