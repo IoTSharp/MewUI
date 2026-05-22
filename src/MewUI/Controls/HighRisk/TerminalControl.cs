@@ -30,6 +30,8 @@ public sealed class TerminalControl : Control, ITextInputClient, ITextCompositio
     private const int DefaultRows = 24;
     private const int DefaultScrollbackLimit = 2000;
     private const char Escape = '\u001b';
+    private const string CellWidthMeasureSample = "00000000000000000000000000000000";
+    private const double TextRunClipPadding = 2.0;
     private static readonly Color DefaultBackground = Color.FromRgb(12, 16, 20);
     private static readonly Color DefaultForeground = Color.FromRgb(218, 224, 232);
     private static readonly Color CursorColor = Color.FromRgb(245, 245, 245);
@@ -670,7 +672,14 @@ public sealed class TerminalControl : Control, ITextInputClient, ITextCompositio
                 }
             }
 
-            context.DrawText(text.ToString(), new Rect(x + start * _cellWidth, y, (end - start) * _cellWidth, _lineHeight), font, color, TextAlignment.Left, TextAlignment.Top, TextWrapping.NoWrap);
+            context.DrawText(
+                text.ToString(),
+                CreateTextRunBounds(x, y, start, end, columns),
+                font,
+                color,
+                TextAlignment.Left,
+                TextAlignment.Top,
+                TextWrapping.NoWrap);
             start = end;
         }
     }
@@ -719,7 +728,14 @@ public sealed class TerminalControl : Control, ITextInputClient, ITextCompositio
                 text.Append(ch);
             }
 
-            context.DrawText(text.ToString(), new Rect(x + start * _cellWidth, y, (end - start) * _cellWidth, _lineHeight), font, color, TextAlignment.Left, TextAlignment.Top, TextWrapping.NoWrap);
+            context.DrawText(
+                text.ToString(),
+                CreateTextRunBounds(x, y, start, end, _columns),
+                font,
+                color,
+                TextAlignment.Left,
+                TextAlignment.Top,
+                TextWrapping.NoWrap);
             start = end;
         }
     }
@@ -985,9 +1001,28 @@ public sealed class TerminalControl : Control, ITextInputClient, ITextCompositio
     private void EnsureCellMetrics()
     {
         using var measure = BeginTextMeasurement();
-        var size = measure.Context.MeasureText("W", measure.Font);
-        _cellWidth = Math.Max(6, Math.Ceiling(size.Width));
+        _cellWidth = Math.Max(6, MeasureCellAdvance(measure.Context, measure.Font));
         _lineHeight = Math.Max(12, Math.Ceiling(measure.Context.MeasureText("Mg", measure.Font).Height + 2));
+    }
+
+    private static double MeasureCellAdvance(IGraphicsContext context, IFont font)
+    {
+        var sampleSize = context.MeasureText(CellWidthMeasureSample, font);
+        if (sampleSize.Width > 0)
+        {
+            return sampleSize.Width / CellWidthMeasureSample.Length;
+        }
+
+        return context.MeasureText("0", font).Width;
+    }
+
+    private Rect CreateTextRunBounds(double x, double y, int startColumn, int endColumn, int totalColumns)
+    {
+        double runX = x + startColumn * _cellWidth;
+        double runWidth = Math.Max(_cellWidth, (endColumn - startColumn) * _cellWidth);
+        double remainingWidth = Math.Max(0, (totalColumns - startColumn) * _cellWidth);
+        double paddedWidth = Math.Min(remainingWidth, runWidth + TextRunClipPadding);
+        return new Rect(runX, y, paddedWidth, _lineHeight);
     }
 
     private Rect GetTerminalBounds()

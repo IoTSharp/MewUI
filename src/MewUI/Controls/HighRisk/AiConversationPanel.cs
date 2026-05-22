@@ -74,6 +74,8 @@ public sealed class AiConversationPanel : UserControl
 
     public event Action? AttachRequested;
 
+    public event Action? ConfigureRequested;
+
     public event Action<AiAttachment>? DraftAttachmentRemoveRequested;
 
     public event Action? ApprovalApproveRequested;
@@ -246,9 +248,21 @@ public sealed class AiConversationPanel : UserControl
                                     .SemiBold()
                                     .DockLeft(),
 
-                                new TextBlock()
-                                    .BindText(_subtitle)
+                                new StackPanel()
+                                    .Horizontal()
+                                    .Spacing(8)
                                     .DockRight()
+                                    .Children(
+                                        new TextBlock()
+                                            .BindText(_subtitle)
+                                            .CenterVertical(),
+
+                                        new Button()
+                                            .Height(26)
+                                            .MinWidth(54)
+                                            .Padding(8, 3)
+                                            .Content("设置")
+                                            .OnClick(() => ConfigureRequested?.Invoke()))
                             )),
 
                 BuildApprovalPrompt().DockTop(),
