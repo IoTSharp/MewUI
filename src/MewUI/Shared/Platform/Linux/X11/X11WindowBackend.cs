@@ -2355,8 +2355,8 @@ internal sealed class X11WindowBackend : IWindowBackend
     // X11 WM removes all decorations (title bar + border + shadow) — not a true
     // "extend client area" like Win32/macOS. Reported as None so NativeCustomWindow
     // keeps the default title bar on X11.
-    public Controls.WindowChromeCapabilities ChromeCapabilities =>
-        Controls.WindowChromeCapabilities.None;
+    public WindowChromeCapabilities ChromeCapabilities =>
+        WindowChromeCapabilities.None;
 
     public void SetAllowsTransparency(bool allowsTransparency)
     {

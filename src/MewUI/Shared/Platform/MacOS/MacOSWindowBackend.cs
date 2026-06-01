@@ -676,7 +676,7 @@ internal sealed class MacOSWindowBackend : IWindowBackend
         // The window frame color is determined by the system appearance.
     }
 
-    public Controls.WindowChromeCapabilities ChromeCapabilities =>
+    public WindowChromeCapabilities ChromeCapabilities =>
         Controls.WindowChromeCapabilities.ExtendClientArea
         | Controls.WindowChromeCapabilities.NativeChromeButtons
         | Controls.WindowChromeCapabilities.NativeWindowBorder;

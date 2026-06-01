@@ -328,7 +328,7 @@ internal sealed class Win32WindowBackend : IWindowBackend
             ref colorRef, sizeof(int));
     }
 
-    public Controls.WindowChromeCapabilities ChromeCapabilities
+    public WindowChromeCapabilities ChromeCapabilities
     {
         get
         {
@@ -337,8 +337,8 @@ internal sealed class Win32WindowBackend : IWindowBackend
                 ? Controls.WindowChromeCapabilities.ExtendClientArea
                 : Controls.WindowChromeCapabilities.None;
             if (IsWindows11OrLater)
-                caps |= Controls.WindowChromeCapabilities.NativeBorderColor
-                      | Controls.WindowChromeCapabilities.NativeWindowBorder;
+                caps |= WindowChromeCapabilities.NativeBorderColor
+                      | WindowChromeCapabilities.NativeWindowBorder;
             return caps;
         }
     }
