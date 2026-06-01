@@ -176,13 +176,14 @@ internal static class WindowInputRouter
 
     /// <summary>
     /// Routes a mouse wheel event by bubbling from the hit-tested element to the root until handled.
+    /// <para><paramref name="delta"/> is in notches. +Y = scroll up, +X = scroll left.
+    /// Fractional values represent sub-notch (trackpad / high-res) input.</para>
     /// </summary>
     public static void MouseWheel(
         Window window,
         Point positionInWindow,
         Point screenPosition,
-        int delta,
-        bool isHorizontal,
+        Vector delta,
         bool leftDown = false,
         bool rightDown = false,
         bool middleDown = false)
@@ -190,7 +191,7 @@ internal static class WindowInputRouter
         window.UpdateLastMousePosition(positionInWindow, screenPosition);
 
         var element = window.HitTest(positionInWindow);
-        var args = new MouseWheelEventArgs(positionInWindow, screenPosition, delta, isHorizontal, leftDown, rightDown, middleDown)
+        var args = new MouseWheelEventArgs(positionInWindow, screenPosition, delta, leftDown, rightDown, middleDown)
         {
             OriginalSource = element,
             Source = element,

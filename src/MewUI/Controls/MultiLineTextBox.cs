@@ -457,8 +457,8 @@ public sealed class MultiLineTextBox : TextBase
             return;
         }
 
-        int notches = Math.Sign(e.Delta);
-        if (notches == 0)
+        double scrollDip = e.Delta.Y * Theme.Metrics.ScrollWheelStep;
+        if (Math.Abs(scrollDip) < 0.5)
         {
             return;
         }
@@ -467,7 +467,7 @@ public sealed class MultiLineTextBox : TextBase
         double viewportH = viewportBounds.Height;
         double viewportW = viewportBounds.Width;
         var dpiScale = GetDpi() / 96.0;
-        SetVerticalOffset(ClampOffset(VerticalOffset - notches * Theme.Metrics.ScrollWheelStep, GetExtentHeight(viewportW), viewportH, dpiScale), false);
+        SetVerticalOffset(ClampOffset(VerticalOffset - scrollDip, GetExtentHeight(viewportW), viewportH, dpiScale), false);
         _vBar.Value = VerticalOffset;
         InvalidateVisual();
         e.Handled = true;

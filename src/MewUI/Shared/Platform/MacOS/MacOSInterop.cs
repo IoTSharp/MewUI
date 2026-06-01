@@ -76,6 +76,7 @@ internal static unsafe class MacOSInterop
     private static nint SelDeltaY;
     private static nint SelScrollingDeltaX;
     private static nint SelScrollingDeltaY;
+    private static nint SelHasPreciseScrollingDeltas;
     private static nint SelKeyCode;
     private static nint SelCharacters;
     private static nint SelCharactersIgnoringModifiers;
@@ -153,6 +154,7 @@ internal static unsafe class MacOSInterop
         SelDeltaY = ObjC.Sel("deltaY");
         SelScrollingDeltaX = ObjC.Sel("scrollingDeltaX");
         SelScrollingDeltaY = ObjC.Sel("scrollingDeltaY");
+        SelHasPreciseScrollingDeltas = ObjC.Sel("hasPreciseScrollingDeltas");
         SelKeyCode = ObjC.Sel("keyCode");
         SelCharacters = ObjC.Sel("characters");
         SelCharactersIgnoringModifiers = ObjC.Sel("charactersIgnoringModifiers");
@@ -485,6 +487,22 @@ internal static unsafe class MacOSInterop
         }
 
         return ObjC.MsgSend_double(ev, SelDeltaY);
+    }
+
+    /// <summary>
+    /// Returns <see langword="true"/> when the event reports point-precise scrolling
+    /// deltas (trackpad / Magic Mouse). Non-precise events (traditional notched wheel)
+    /// report deltas in "lines".
+    /// </summary>
+    public static bool GetEventHasPreciseScrollingDeltas(nint ev)
+    {
+        EnsureApplicationInitialized();
+        if (ev == 0)
+        {
+            return false;
+        }
+
+        return ObjC.MsgSend_bool(ev, SelHasPreciseScrollingDeltas);
     }
 
     public static int GetEventKeyCode(nint ev)

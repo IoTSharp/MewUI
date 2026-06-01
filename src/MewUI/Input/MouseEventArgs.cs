@@ -122,31 +122,28 @@ public class MouseEventArgs
 public class MouseWheelEventArgs : MouseEventArgs
 {
     /// <summary>
-    /// Gets the wheel delta (positive = up, negative = down).
+    /// Gets the wheel scroll delta in notches.
+    /// <para>1.0 corresponds to one mouse-wheel notch. Trackpads and high-resolution
+    /// devices may produce fractional values.</para>
+    /// <para>Sign convention: <see cref="Vector.Y"/> positive = scroll-up intent
+    /// (toward earlier content); <see cref="Vector.X"/> positive = scroll-left intent.</para>
     /// </summary>
-    public int Delta { get; }
-
-    /// <summary>
-    /// Gets whether this is a horizontal scroll event.
-    /// </summary>
-    public bool IsHorizontal { get; }
+    public Vector Delta { get; }
 
     /// <summary>
     /// Initializes a new instance of the <see cref="MouseWheelEventArgs"/> class.
     /// </summary>
     /// <param name="position">Mouse position relative to the element (DIPs).</param>
     /// <param name="screenPosition">Mouse position in screen coordinates in device pixels.</param>
-    /// <param name="delta">Wheel delta. Positive means scrolling toward earlier content
-    /// (vertical: up, horizontal: left); negative means the opposite direction.</param>
-    /// <param name="isHorizontal"><see langword="true"/> for horizontal scroll; otherwise, <see langword="false"/>.</param>
+    /// <param name="delta">Wheel delta in notches. +Y = scroll up, +X = scroll left.
+    /// Magnitude under 1.0 indicates a sub-notch (trackpad / high-res) input.</param>
     /// <param name="leftButton">Whether the left button is pressed.</param>
     /// <param name="rightButton">Whether the right button is pressed.</param>
     /// <param name="middleButton">Whether the middle button is pressed.</param>
-    public MouseWheelEventArgs(Point position, Point screenPosition, int delta, bool isHorizontal = false,
+    public MouseWheelEventArgs(Point position, Point screenPosition, Vector delta,
         bool leftButton = false, bool rightButton = false, bool middleButton = false)
         : base(position, screenPosition, MouseButton.Middle, leftButton, rightButton, middleButton)
     {
         Delta = delta;
-        IsHorizontal = isHorizontal;
     }
 }

@@ -1,4 +1,5 @@
 using Aprillz.MewUI.Controls.Text;
+using Aprillz.MewUI.Input;
 using Aprillz.MewUI.Rendering;
 
 namespace Aprillz.MewUI.Controls;
@@ -60,6 +61,7 @@ public sealed class NumericUpDown : RangeBase, IVisualTreeHost
     private ButtonPart _pressedPart;
     private readonly TextBox _textBox;
     private bool _suppressTextBoxUpdate;
+    private WheelNotchAccumulator _wheelAccumulator;
 
     protected override VisualState ComputeVisualState()
     {
@@ -337,10 +339,14 @@ public sealed class NumericUpDown : RangeBase, IVisualTreeHost
             return;
         }
 
+        int notches = _wheelAccumulator.TakeY(e.Delta.Y);
+        if (notches == 0)
+        {
+            e.Handled = true;
+            return;
+        }
 
-        double step = GetEffectiveStep();
-        double delta = e.Delta > 0 ? step : -step;
-        Value += delta;
+        Value += notches * GetEffectiveStep();
         e.Handled = true;
         UpdateTextBoxFromValue();
         InvalidateVisual();

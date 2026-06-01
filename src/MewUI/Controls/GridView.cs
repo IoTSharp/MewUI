@@ -402,17 +402,18 @@ public sealed class GridView : VirtualizedItemsBase, IFocusIntoViewHost, IVirtua
         bool canVScroll = _rowsExtentHeight > _rowsViewportHeight + 0.5;
         bool canHScroll = _columnsExtentWidth > _rowsViewportWidth + 0.5;
 
-        // Prefer vertical scroll unless a horizontal wheel event is explicit.
-        if (!e.IsHorizontal && canVScroll)
+        bool isVerticalIntent = Math.Abs(e.Delta.Y) >= Math.Abs(e.Delta.X);
+
+        if (isVerticalIntent && canVScroll)
         {
-            _scrollViewer.ScrollBy(-e.Delta);
+            _scrollViewer.ScrollBy(-e.Delta.Y);
             e.Handled = true;
             return;
         }
 
-        if (e.IsHorizontal && canHScroll)
+        if (!isVerticalIntent && canHScroll)
         {
-            _scrollViewer.ScrollByHorizontal(-e.Delta);
+            _scrollViewer.ScrollByHorizontal(-e.Delta.X);
             e.Handled = true;
         }
     }

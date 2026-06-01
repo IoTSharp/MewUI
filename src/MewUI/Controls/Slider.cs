@@ -171,13 +171,12 @@ public sealed class Slider : RangeBase
     protected override void OnMouseWheel(MouseWheelEventArgs e)
     {
         base.OnMouseWheel(e);
-        if (!IsEffectivelyEnabled || !ChangeOnWheel)
+        if (!IsEffectivelyEnabled || !ChangeOnWheel || e.Delta.Y == 0)
         {
             return;
         }
 
-        double step = GetKeyboardSmallStep();
-        SetValueInternal(Value + (e.Delta > 0 ? step : -step), true);
+        SetValueInternal(Value + e.Delta.Y, true);
         e.Handled = true;
     }
 

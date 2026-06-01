@@ -334,8 +334,8 @@ internal sealed class Win32WindowBackend : IWindowBackend
         {
             bool dwmEnabled = Native.Dwmapi.DwmIsCompositionEnabled(out int enabled) == 0 && enabled != 0;
             var caps = dwmEnabled
-                ? Controls.WindowChromeCapabilities.ExtendClientArea
-                : Controls.WindowChromeCapabilities.None;
+                ? WindowChromeCapabilities.ExtendClientArea
+                : WindowChromeCapabilities.None;
             if (IsWindows11OrLater)
                 caps |= WindowChromeCapabilities.NativeBorderColor
                       | WindowChromeCapabilities.NativeWindowBorder;
@@ -1825,23 +1825,26 @@ internal sealed class Win32WindowBackend : IWindowBackend
 
     private nint HandleMouseWheel(nint wParam, nint lParam, bool isHorizontal)
     {
-        int delta = (short)((wParam.ToInt64() >> 16) & 0xFFFF);
+        int raw = (short)((wParam.ToInt64() >> 16) & 0xFFFF);
 
-        // MouseWheelEventArgs.Delta convention is "positive = toward earlier content"
-        // (vertical: up, horizontal: left). Win32 vertical (WM_MOUSEWHEEL) already matches
-        // — positive = wheel forward = scroll up. But Win32 horizontal (WM_MOUSEHWHEEL)
-        // is the opposite — positive = tilt right = scroll right — so negate it here.
-        if (isHorizontal)
-        {
-            delta = -delta;
-        }
+        // Win32 WHEEL_DELTA = 120 per notch. High-resolution mice / Precision Touchpad
+        // can deliver values less than 120 as fractional notches.
+        double notches = raw / 120.0;
+
+        // MouseWheelEventArgs.Delta convention: +Y = scroll-up intent, +X = scroll-left intent.
+        // Win32 vertical (WM_MOUSEWHEEL) raw +120 = wheel forward = scroll up → matches +Y.
+        // Win32 horizontal (WM_MOUSEHWHEEL) raw +120 = tilt right = scroll right → opposite
+        // of our +X convention, so flip the sign on the X axis.
+        Vector delta = isHorizontal
+            ? new Vector(-notches, 0)
+            : new Vector(0, notches);
 
         var screenX = (short)(lParam.ToInt64() & 0xFFFF);
         var screenY = (short)((lParam.ToInt64() >> 16) & 0xFFFF);
         var pt = new POINT(screenX, screenY);
         User32.ScreenToClient(Handle, ref pt);
         var pos = new Point(pt.x / Window.DpiScale, pt.y / Window.DpiScale);
-        WindowInputRouter.MouseWheel(Window, pos, new Point(screenX, screenY), delta, isHorizontal);
+        WindowInputRouter.MouseWheel(Window, pos, new Point(screenX, screenY), delta);
 
         return 0;
     }

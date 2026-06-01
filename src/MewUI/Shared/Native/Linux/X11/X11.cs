@@ -95,6 +95,25 @@ internal static partial class X11
     [LibraryImport(LibraryName)]
     public static partial int XSelectInput(nint display, nint window, nint eventMask);
 
+    [LibraryImport(LibraryName, StringMarshalling = StringMarshalling.Utf8)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static partial bool XQueryExtension(
+        nint display,
+        string name,
+        out int majorOpcodeReturn,
+        out int firstEventReturn,
+        out int firstErrorReturn);
+
+    // GenericEvent (XEvent.type == 35) cookies — used by XInput2 and other modern extensions.
+    // These belong to core libX11; the extension-specific payload referenced through
+    // XGenericEventCookie.data is interpreted by the receiving extension.
+    [LibraryImport(LibraryName)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static partial bool XGetEventData(nint display, ref XGenericEventCookie cookie);
+
+    [LibraryImport(LibraryName)]
+    public static partial void XFreeEventData(nint display, ref XGenericEventCookie cookie);
+
     [LibraryImport(LibraryName)]
     public static partial void XFlush(nint display);
 
@@ -296,6 +315,31 @@ internal struct XKeyEvent
     public bool same_screen;
 }
 
+/// <summary>
+/// X11 mouse button codes as delivered in <see cref="XButtonEvent.button"/>.
+/// X11 reports wheel rotation as press/release of synthetic buttons 4–7.
+/// </summary>
+internal static class X11MouseButton
+{
+    public const uint Left = 1;
+    public const uint Middle = 2;
+    public const uint Right = 3;
+    public const uint WheelUp = 4;
+    public const uint WheelDown = 5;
+    public const uint WheelLeft = 6;
+    public const uint WheelRight = 7;
+}
+
+/// <summary>
+/// X11 modifier bits as carried in <see cref="XButtonEvent.state"/> / <see cref="XMotionEvent.state"/>.
+/// </summary>
+internal static class X11ModifierMask
+{
+    public const uint Button1 = 1u << 8;    // Left button held
+    public const uint Button2 = 1u << 9;    // Middle button held
+    public const uint Button3 = 1u << 10;   // Right button held
+}
+
 [StructLayout(LayoutKind.Sequential)]
 internal struct XButtonEvent
 {
@@ -371,6 +415,33 @@ internal struct XEvent
 
     [FieldOffset(0)]
     public XSelectionEvent xselection;
+
+    [FieldOffset(0)]
+    public XGenericEventCookie xcookie;
+}
+
+internal static class X11EventType
+{
+    public const int GenericEvent = 35;
+}
+
+/// <summary>
+/// Generic event cookie variant of <see cref="XEvent"/>. When <see cref="XEvent.type"/>
+/// equals <see cref="X11EventType.GenericEvent"/> (35), the union member is this cookie
+/// referencing extension-specific payload at <see cref="data"/>.
+/// </summary>
+[StructLayout(LayoutKind.Sequential)]
+internal struct XGenericEventCookie
+{
+    public int type;
+    public nuint serial;
+    [MarshalAs(UnmanagedType.Bool)]
+    public bool send_event;
+    public nint display;
+    public int extension;
+    public int evtype;
+    public uint cookie;
+    public nint data;       // pointer to extension event payload (e.g. XIDeviceEvent*)
 }
 
 [StructLayout(LayoutKind.Sequential)]

@@ -57,8 +57,6 @@ internal sealed class MacOSWindowBackend : IWindowBackend
     private readonly HashSet<int> _forceKeyUps = new();
     private bool _enabled = true;
     private bool _closedRaised;
-    private double _wheelRemainderX;
-    private double _wheelRemainderY;
     private readonly int[] _lastPressClickCounts = new int[5];
     private int _reshapeRendering;
     private long _defaultWindowLevel;
@@ -677,9 +675,9 @@ internal sealed class MacOSWindowBackend : IWindowBackend
     }
 
     public WindowChromeCapabilities ChromeCapabilities =>
-        Controls.WindowChromeCapabilities.ExtendClientArea
-        | Controls.WindowChromeCapabilities.NativeChromeButtons
-        | Controls.WindowChromeCapabilities.NativeWindowBorder;
+        WindowChromeCapabilities.ExtendClientArea
+        | WindowChromeCapabilities.NativeChromeButtons
+        | WindowChromeCapabilities.NativeWindowBorder;
 
     public Thickness NativeChromeButtonInset
     {
@@ -1250,6 +1248,11 @@ internal sealed class MacOSWindowBackend : IWindowBackend
             clickCount);
     }
 
+    // Trackpad point-delta → notch normalization.
+    // Matches Avalonia AvnView.mm (precise speed=50) for macOS-native feel.
+    // Backend-private — never references Theme or any input-layer constant.
+    private const double TrackpadPointsPerNotch = 50.0;
+
     private void HandleMouseWheel(nint ev, Point pos, Point screenPos)
     {
         // Prefer high-precision deltas when available, but fall back to legacy deltaX/deltaY for devices
@@ -1265,32 +1268,35 @@ internal sealed class MacOSWindowBackend : IWindowBackend
             dx = MacOSInterop.GetEventDeltaX(ev);
         }
 
-        // Normalize to "wheel units" (~120 per notch), but accumulate fractional deltas so trackpads
-        // still scroll even when individual events are small.
-        _wheelRemainderY += dy * 120.0;
-        _wheelRemainderX += dx * 120.0;
+        bool precise = MacOSInterop.GetEventHasPreciseScrollingDeltas(ev);
 
-        int deltaY = (int)Math.Truncate(_wheelRemainderY);
-        int deltaX = (int)Math.Truncate(_wheelRemainderX);
-
-        if (deltaY != 0)
+        // Convert to MouseWheelEventArgs.Delta convention (notches, +Y = up, +X = left).
+        // NSEvent's scrollingDelta already uses the "+Y = scroll up, +X = scroll left" sign
+        // convention so no sign flip is needed — only unit normalization.
+        double notchesY;
+        double notchesX;
+        if (precise)
         {
-            _wheelRemainderY -= deltaY;
+            // Trackpad / Magic Mouse: scrollingDelta is in points (DIPs).
+            notchesY = dy / TrackpadPointsPerNotch;
+            notchesX = dx / TrackpadPointsPerNotch;
         }
-        if (deltaX != 0)
+        else
         {
-            _wheelRemainderX -= deltaX;
-        }
-
-        if (deltaX != 0)
-        {
-            WindowInputRouter.MouseWheel(_window, pos, screenPos, deltaX, isHorizontal: true, _leftDown, _rightDown, _middleDown);
+            // Classic mouse wheel: scrollingDelta is already in line/notch units (≈1.0 per notch).
+            notchesY = dy;
+            notchesX = dx;
         }
 
-        if (deltaY != 0)
+        if (notchesY == 0 && notchesX == 0)
         {
-            WindowInputRouter.MouseWheel(_window, pos, screenPos, deltaY, isHorizontal: false, _leftDown, _rightDown, _middleDown);
+            return;
         }
+
+        WindowInputRouter.MouseWheel(
+            _window, pos, screenPos,
+            new Vector(notchesX, notchesY),
+            _leftDown, _rightDown, _middleDown);
     }
 
     private void HandleKeyDown(nint ev)

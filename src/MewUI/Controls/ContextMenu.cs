@@ -422,8 +422,8 @@ public sealed class ContextMenu : Control, IPopupOwner
             return;
         }
 
-        int notches = Math.Sign(e.Delta);
-        if (notches == 0)
+        double scrollDip = -e.Delta.Y * Theme.Metrics.ScrollWheelStep;
+        if (Math.Abs(scrollDip) < 0.5)
         {
             return;
         }
@@ -431,7 +431,7 @@ public sealed class ContextMenu : Control, IPopupOwner
         var dpiScale = GetDpi() / 96.0;
         _scroll.DpiScale = dpiScale;
         _scroll.SetMetricsDip(1, _extentHeight, _viewportHeight);
-        if (_scroll.ScrollByNotches(1, -notches, Theme.Metrics.ScrollWheelStep))
+        if (_scroll.ScrollByDip(1, scrollDip))
         {
             _verticalOffset = _scroll.GetOffsetDip(1);
             _vBar.Value = _verticalOffset;

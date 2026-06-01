@@ -485,17 +485,19 @@ public sealed class ScrollViewer : ContentControl
             return;
         }
 
-        // Prefer vertical scroll unless horizontal wheel is explicit.
-        if (!e.IsHorizontal && _vBar.IsVisible)
+        // Pick the dominant axis from a 2D delta (trackpads can produce both axes simultaneously).
+        bool isVerticalIntent = Math.Abs(e.Delta.Y) >= Math.Abs(e.Delta.X);
+
+        if (isVerticalIntent && _vBar.IsVisible)
         {
-            ScrollBy(-e.Delta);
+            ScrollBy(-e.Delta.Y);
             e.Handled = true;
             return;
         }
 
-        if (e.IsHorizontal && _hBar.IsVisible)
+        if (!isVerticalIntent && _hBar.IsVisible)
         {
-            ScrollByHorizontal(-e.Delta);
+            ScrollByHorizontal(-e.Delta.X);
             e.Handled = true;
         }
     }
@@ -507,38 +509,33 @@ public sealed class ScrollViewer : ContentControl
         return visitor(_hBar);
     }
 
-    public void ScrollBy(double delta)
+    /// <summary>
+    /// Scrolls vertically by a fractional notch count. 1.0 = one wheel notch worth of DIPs
+    /// (defined by <see cref="ThemeMetrics.ScrollWheelStep"/>).
+    /// </summary>
+    public void ScrollBy(double notches)
     {
-        // delta is in wheel units; map to DIPs using a simple step.
-        double step = Theme.Metrics.ScrollWheelStep;
-        int notches = Math.Sign(delta);
-        if (notches == 0)
-        {
-            return;
-        }
-
-        _scroll.DpiScale = DpiScale;
-        if (_scroll.ScrollByNotches(1, notches, step))
-        {
-            InvalidateArrange();
-        }
-        SyncBars();
-        InvalidateVisual();
-        ReevaluateMouseOverAfterScroll();
-        NotifyScrollChanged();
+        ScrollAxisByNotches(axis: 1, notches);
     }
 
-    public void ScrollByHorizontal(double delta)
+    /// <summary>
+    /// Scrolls horizontally by a fractional notch count. 1.0 = one wheel notch worth of DIPs.
+    /// </summary>
+    public void ScrollByHorizontal(double notches)
     {
-        double step = Theme.Metrics.ScrollWheelStep;
-        int notches = Math.Sign(delta);
-        if (notches == 0)
+        ScrollAxisByNotches(axis: 0, notches);
+    }
+
+    private void ScrollAxisByNotches(int axis, double notches)
+    {
+        double dip = notches * Theme.Metrics.ScrollWheelStep;
+        if (Math.Abs(dip) < 0.5)
         {
             return;
         }
 
         _scroll.DpiScale = DpiScale;
-        if (_scroll.ScrollByNotches(0, notches, step))
+        if (_scroll.ScrollByDip(axis, dip))
         {
             InvalidateArrange();
         }

@@ -1,4 +1,5 @@
 using Aprillz.MewUI.Controls.Text;
+using Aprillz.MewUI.Input;
 using Aprillz.MewUI.Rendering;
 
 namespace Aprillz.MewUI.Controls;
@@ -25,6 +26,7 @@ public sealed partial class ComboBox : DropDownBase
     private bool _syncingSelectedIndex;
     private bool _suppressItemsSelectionChanged;
     private ISelectableItemsView _itemsSource = ItemsView.EmptySelectable;
+    private WheelNotchAccumulator _wheelAccumulator;
     private IDataTemplate? _itemTemplate;
 
     public bool ZebraStriping
@@ -458,7 +460,16 @@ public sealed partial class ComboBox : DropDownBase
             return;
         }
 
-        int next = Math.Clamp(SelectedIndex + (e.Delta > 0 ? -1 : 1), 0, count - 1);
+        // Accumulate so trackpad sub-notch swipes don't advance an item per micro-event.
+        int notches = _wheelAccumulator.TakeY(e.Delta.Y);
+        if (notches == 0)
+        {
+            e.Handled = true;
+            return;
+        }
+
+        // Wheel up (+notch) selects the previous item; wheel down advances.
+        int next = Math.Clamp(SelectedIndex - notches, 0, count - 1);
         if (next != SelectedIndex)
         {
             SelectedIndex = next;

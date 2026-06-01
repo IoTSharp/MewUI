@@ -1,5 +1,6 @@
 using Aprillz.MewUI.Controls;
 using Aprillz.MewUI.Diagnostics;
+using Aprillz.MewUI.Input;
 using Aprillz.MewUI.Rendering;
 
 
@@ -311,6 +312,7 @@ partial class Window
         private double _timelineViewStartMs;
         private double _timelineViewDurationMs = double.NaN;
         private int _detailsScrollRow;
+        private WheelNotchAccumulator _wheelAccumulator;
 
         public bool IsLive { get; set; } = true;
 
@@ -485,10 +487,23 @@ partial class Window
         {
             base.OnMouseWheel(e);
 
+            int notches = _wheelAccumulator.TakeY(e.Delta.Y);
+            if (notches == 0)
+            {
+                e.Handled = true;
+                return;
+            }
+
             var point = ToRenderPoint(e.GetPosition(this));
             if (_lastTimelineRect.Contains(point))
             {
-                ZoomTimeline(point, e.Delta > 0);
+                // One zoom step per accumulated whole notch; sign of notches drives direction.
+                int zoomSteps = Math.Abs(notches);
+                bool zoomIn = notches > 0;
+                for (int i = 0; i < zoomSteps; i++)
+                {
+                    ZoomTimeline(point, zoomIn);
+                }
                 e.Handled = true;
                 InvalidateVisual();
                 return;
@@ -499,8 +514,8 @@ partial class Window
                 return;
             }
 
-            int direction = e.Delta > 0 ? -1 : 1;
-            _detailsScrollRow = Math.Max(0, _detailsScrollRow + direction * 3);
+            // Wheel up scrolls up (toward earlier rows = smaller _detailsScrollRow).
+            _detailsScrollRow = Math.Max(0, _detailsScrollRow - notches * 3);
             e.Handled = true;
             InvalidateVisual();
         }
