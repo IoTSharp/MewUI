@@ -137,6 +137,9 @@ public partial class Window : ContentControl, ILayoutRoundingHost
     {
         _lastMousePositionDip = positionDip;
         _lastMouseScreenPositionPx = screenPositionPx;
+#if DEBUG
+        InvalidateInspectorOverlayIfHoverChanged();
+#endif
     }
 
     internal void ReevaluateMouseOver()
